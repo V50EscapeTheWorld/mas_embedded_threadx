@@ -104,11 +104,10 @@ static void lk_can_rx_callback(Can_Device *dev, const uint8_t *data, uint8_t len
                                          * (2.0f * PI);
         motor->base.measure.single_round_angle = single_round_angle_rad;
 
-        /* 总角度: 首帧直接赋值, 后续跨圈累加 */
+        /* 总角度 */
         if (!motor->measure.first_frame)
         {
-            motor->base.measure.total_angle = 0;
-            motor->measure.first_frame      = 1;
+            motor->measure.first_frame = 1;
         }
         else
         {
@@ -125,9 +124,10 @@ static void lk_can_rx_callback(Can_Device *dev, const uint8_t *data, uint8_t len
                 diff -= range;
                 motor->measure.total_round--;
             }
-            motor->base.measure.total_angle += diff;
         }
         motor->measure.last_single_round_angle = single_round_angle_rad;
+        motor->base.measure.total_angle = (float)motor->measure.total_round * (2.0f * PI)
+                                          + single_round_angle_rad;
 
         /* 力矩: iq → 电流 → 电机端扭矩 (仅 MF/MG, MS 无意义) */
         if (motor->base.info.motor_type == MG8016)
