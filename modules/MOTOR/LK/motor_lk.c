@@ -84,17 +84,17 @@ static void lk_can_rx_callback(Can_Device *dev, const uint8_t *data, uint8_t len
 
     LK_Motor_t *motor = (LK_Motor_t *)dev->user_arg;
     uint8_t     cmd   = data[0];
-    /* 状态2 回复帧解析 (读取状态2 + 所有闭环控制命令均回复此格式（因为只用扭矩闭环，因此只加它）) */
+    /* 状态2 回复帧解析 (读取状态2 + 所有闭环控制命令均回复此格式 */
     if (cmd == LK_CMD_READ_STATUS2 || cmd == LK_CMD_TORQUE_CLOSED_LOOP)
     {
-        /* 1. 解析原始数据 */
+        /* 解析原始数据 */
         motor->measure.temperature = (int8_t)data[1];
         motor->measure.iq          = (int16_t)((data[3] << 8) | data[2]);
         motor->measure.power       = motor->measure.iq; /* MS 电机此处为输出功率，字段复用 */
         motor->measure.speed       = (int16_t)((data[5] << 8) | data[4]);
         motor->measure.encoder     = (uint16_t)((data[7] << 8) | data[6]);
 
-        /* 2. 计算基类测量值 — 电机端 (减速前) */
+        /* 计算基类测量值(减速后) */
         /* 速度: dps → rad/s */
         motor->base.measure.speed_rad = motor->measure.speed * DEGREE_2_RAD;
 
@@ -129,7 +129,7 @@ static void lk_can_rx_callback(Can_Device *dev, const uint8_t *data, uint8_t len
         motor->base.measure.total_angle = (float)motor->measure.total_round * (2.0f * PI)
                                           + single_round_angle_rad;
 
-        /* 力矩: iq → 电流 → 电机端扭矩 (仅 MF/MG, MS 无意义) */
+        /* 力矩: iq → 电流 → 扭矩 (仅 MF/MG, MS 无意义) */
         if (motor->base.info.motor_type == MG8016)
         {
             motor->base.measure.torque_nm = (int16_t)motor->measure.iq
@@ -174,7 +174,6 @@ static void Motor_LK_TorqueCtrl(LK_Motor_t *motor, int16_t iq)
 /**
  * @brief 翎控电机阶段2: 输出应用 (每周期调用)
  * @note  数据流: output_torque(电机端 Nm) → ÷(Kt × gear_ratio × 电流分辨率) → iq → CAN 发送
- *         与 DJI 一致: PID 输出视为输出端扭矩, 发送时除减速比
  */
 static void lk_apply(Motor_Base *base)
 {
