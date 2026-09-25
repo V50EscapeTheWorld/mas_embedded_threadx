@@ -3,6 +3,7 @@
 #include "bsp_def.h"
 #include "heavy_robot_def.h" 
 #include "arm_func.h"
+#include "module_motor.h"
 
 #define LOG_TAG "app_robot_control"
 #define LOG_LVL LOG_LVL_INFO
@@ -17,7 +18,12 @@ static void robot_control_task(ULONG thread_input)
     (void)thread_input;
     while (1)
     {
+        #if (ROBOTIC_ARM_CTRL_MODE == ROBOTIC_ARM_CTRL_MODE_REMOTE_MAP)
+        remote_ctrl_arm();
+        #endif
         arm_func();
+        /* 力矩已更新, 立刻触发下发 */
+        Motor_RequestApply();
         tx_thread_sleep(2);
     }
 }

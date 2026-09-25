@@ -105,15 +105,17 @@ bool ArmIdentify_Update(void)
 
     for (uint8_t i = 0U; i < ROBOT_ARM_MOTOR_NUM; ++i)
     {
-        if (robot_arm_motors[i] == NULL || !RobotArm_GetJointFeedback(i, &q[i], &qd[i]))
+        const RobotArmJoint *joint = RobotArm_GetJoint(i);
+
+        if (joint == NULL || joint->motor == NULL || !RobotArm_GetJointFeedback(i, &q[i], &qd[i]))
         {
             return false;
         }
 
         /* 电机真正拿到的扭矩: WriteTorque 限幅后写入 output_torque, 再由此下发 */
-        tau[i] = robot_arm_motors[i]->controller.output_torque;
+        tau[i] = joint->motor->controller.output_torque;
         /* 限幅前的模型重力前馈, 供上位机校验 DH 约定 */
-        tau_ff[i] = RobotArm_GetJoint(i)->torque_ff;
+        tau_ff[i] = joint->torque_ff;
     }
 
     /* ---------- 推进扫描轨迹 ---------- */

@@ -99,6 +99,16 @@ bool RobotArm_Init(const RobotArmInitConfig *config);
 bool RobotArm_SetAccelerationFilter(float time_constant_s);
 
 /**
+ * @brief 写入"参考关节运动"(参考角速度/角加速度), 供 ROBOT_ARM_FF_MODE == 1 的前馈使用。
+ * @param qd_rad_s   参考关节角速度, ROBOT_ARM_MOTOR_NUM 个, 单位 rad/s
+ * @param qdd_rad_s2 参考关节角加速度, ROBOT_ARM_MOTOR_NUM 个, 单位 rad/s^2
+ * @return 指针有效返回 true; 任一为 NULL 返回 false 且不改动内部状态。
+ * @note 只在 FF_MODE 1 时被使用; 必须与控制循环在同一个任务里调用(本模块不加锁)。
+ *       没调用过时按 0 处理(= 退化成只重力前馈), 不会用脏数据。
+ */
+bool RobotArm_SetJointReferenceMotion(const float *qd_rad_s, const float *qdd_rad_s2);
+
+/**
  * @brief 设置电机角度到模型关节角的标定关系（方向与零偏）。
  *
  * 完整换算为 模型关节角 = direction × (电机反馈总角度 × feedback_ratio) + offset_rad，
@@ -232,5 +242,15 @@ const RobotArmLinkInertia *RobotArm_GetLinkInertia(uint8_t joint_index);
  * @return 有效索引返回内部只读指针，否则返回 NULL；下一次逆动力学更新会覆盖其内容。
  */
 const RobotArmLinkLoad *RobotArm_GetLinkLoad(uint8_t joint_index);
+
+/**
+ * @brief  取质量阵的对角元 M(j,j) —— 单个关节绕自身转轴的等效转动惯量(模型坐标,
+ *         不含电机转子), 单位 kg*m^2。任何关节都可以取, 索引 0~6 对应 J1~J7。
+ * @note   可随时调用, 但要保证本次控制周期已经更新过正运动学("^0T_i 是新鲜的"), 否则
+ *         拿到的是上一拍的位形。
+ * @return 惯量, 单位 kg*m^2; 索引非法或模型未初始化时返回 0。
+ */
+float RobotArm_GetJointInertia(uint8_t joint_index);
+
 
 #endif
