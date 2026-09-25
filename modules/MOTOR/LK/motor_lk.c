@@ -95,8 +95,9 @@ static void lk_can_rx_callback(Can_Device *dev, const uint8_t *data, uint8_t len
         motor->measure.encoder     = (uint16_t)((data[7] << 8) | data[6]);
 
         /* 计算基类测量值(减速后) */
-        /* 速度: dps → rad/s */
-        motor->base.measure.speed_rad = motor->measure.speed * DEGREE_2_RAD;
+        /* 速度: dps → rad/s。状态2 的 speed 是电机端(减速前)值, 编码器才是输出轴端,
+           ÷减速比统一到输出轴语义 */
+        motor->base.measure.speed_rad = motor->measure.speed * DEGREE_2_RAD / motor->base.info.gear_ratio;
 
         /* 单圈角度: 编码器值 → rad (0 ~ 2π) */
         uint16_t encoder_max            = lk_get_encoder_max(motor->base.info.motor_type);
@@ -129,12 +130,14 @@ static void lk_can_rx_callback(Can_Device *dev, const uint8_t *data, uint8_t len
         motor->base.measure.total_angle = (float)motor->measure.total_round * (2.0f * PI)
                                           + single_round_angle_rad;
 
-        /* 力矩: iq → 电流 → 扭矩 (仅 MF/MG, MS 无意义) */
+        /* 力矩: iq → 电流 → 扭矩 (仅 MF/MG, MS 无意义)
+           ×gear_ratio 换算到输出轴端 */
         if (motor->base.info.motor_type == MG8016)
         {
             motor->base.measure.torque_nm = (int16_t)motor->measure.iq
                                             * LK_MG_TORQUE_CURRENT_RES
-                                            * motor->base.info.torque_constant;
+                                            * motor->base.info.torque_constant
+                                            * motor->base.info.gear_ratio;
         }
         else
         {
@@ -169,7 +172,7 @@ static void Motor_LK_TorqueCtrl(LK_Motor_t *motor, int16_t iq)
     msg.data[7] = 0x00;
 
     BSP_CAN_SendMessage(&msg);
-    BSP_DWT_Delay(0.0002f); /* 200us间隔防止can总线出错 */
+    // BSP_DWT_Delay(0.0002f); /* 200us间隔防止can总线出错 */
 }
 /**
  * @brief 翎控电机阶段2: 输出应用 (每周期调用)

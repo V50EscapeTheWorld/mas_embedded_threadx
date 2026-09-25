@@ -27,4 +27,10 @@
  */
 void Module_Motor_Init(void);
 
+/**
+ * @brief   请求下发一次电机输出 (完全事件触发: 上层每控制周期调用一次)
+ * @warning 使用本模块的工程必须保证有人周期性地调用它, 否则电机不会有任何输出。
+ */
+void Motor_RequestApply(void);
+
 #endif /* _MODULE_MOTOR_H_ */
