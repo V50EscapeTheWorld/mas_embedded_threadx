@@ -19,7 +19,7 @@ static TX_EVENT_FLAGS_GROUP motor_apply_evt;
  */
 void Motor_RequestApply(void)
 {
-    (void)tx_event_flags_set(&motor_apply_evt, MOTOR_APPLY_TRIGGER_BIT, TX_OR);
+    tx_event_flags_set(&motor_apply_evt, MOTOR_APPLY_TRIGGER_BIT, TX_OR);
 }
 
 static void motor_task_entry(ULONG thread_input)
@@ -29,7 +29,7 @@ static void motor_task_entry(ULONG thread_input)
     while (1)
     {
         /* 完全事件触发: 没人请求就一直阻塞(无超时兜底, 频率与掉线策略由上层决定) */
-        (void)tx_event_flags_get(&motor_apply_evt, MOTOR_APPLY_TRIGGER_BIT, TX_OR_CLEAR, &actual_flags, TX_WAIT_FOREVER);
+        tx_event_flags_get(&motor_apply_evt, MOTOR_APPLY_TRIGGER_BIT, TX_OR_CLEAR, &actual_flags, TX_WAIT_FOREVER);
 
         /* 控制计算 */
         Motor_ControlAll();
