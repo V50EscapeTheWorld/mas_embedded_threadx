@@ -25,6 +25,30 @@ static RobotArmLinkLoad robot_arm_link_load[ROBOT_ARM_MOTOR_NUM];
 /* q_ddot 一阶低通滤波器的当前时间常数，单位 s；0 表示不滤波 */
 static float robot_arm_acceleration_filter_tau_s = ROBOT_ARM_DEFAULT_ACCELERATION_FILTER_TAU_S;
 
+/* 参考关节运动(FF_MODE 1 用): 由上层每拍写入; 没写过时 valid=false, 按 0 处理(退化成只重力) */
+static float robot_arm_ref_velocity_rad_s[ROBOT_ARM_MOTOR_NUM];
+static float robot_arm_ref_acceleration_rad_s2[ROBOT_ARM_MOTOR_NUM];
+static bool  robot_arm_ref_motion_valid;
+
+/**
+ * @brief 写入参考关节运动(角速度/角加速度), 说明见 arm_ff_ctrl.h 同一函数的注释。
+ */
+bool RobotArm_SetJointReferenceMotion(const float *qd_rad_s, const float *qdd_rad_s2)
+{
+    if ((qd_rad_s == NULL) || (qdd_rad_s2 == NULL))
+    {
+        return false;
+    }
+
+    for (uint8_t i = 0U; i < ROBOT_ARM_MOTOR_NUM; ++i)
+    {
+        robot_arm_ref_velocity_rad_s[i]      = qd_rad_s[i];
+        robot_arm_ref_acceleration_rad_s2[i] = qdd_rad_s2[i];
+    }
+    robot_arm_ref_motion_valid = true;
+    return true;
+}
+
 /**
  * @brief 判断电机类型是否具有本模块支持的角度和速度反馈。
  */
@@ -93,6 +117,10 @@ static void RobotArm_ResetModuleState(void)
     }
 
     robot_arm_acceleration_filter_tau_s = ROBOT_ARM_DEFAULT_ACCELERATION_FILTER_TAU_S;
+
+    memset(robot_arm_ref_velocity_rad_s, 0, sizeof(robot_arm_ref_velocity_rad_s));
+    memset(robot_arm_ref_acceleration_rad_s2, 0, sizeof(robot_arm_ref_acceleration_rad_s2));
+    robot_arm_ref_motion_valid = false;
 }
 
 /**
@@ -320,14 +348,23 @@ bool RobotArm_UpdateForwardMotion(float dt_s, const RobotArmLinkMotion *base_mot
     for (uint8_t i = 0U; i < ROBOT_ARM_MOTOR_NUM; ++i)
     {
         joint_angle_rad[i]           = robot_arm_joint_buf[i].current_angle;
-#if ROBOTIC_ARM_MODE_IS_GRAVITY_ONLY
-        /* 纯重力示教/保持/辨识: 只发静态重力前馈。屏蔽速度/加速度动态项,
-           避免无闭环系统上由加速度差分驱动的惯性前馈正反馈自激。 */
+#if (ROBOT_ARM_FF_MODE == 0)
+        /* 只重力前馈: 只用当前姿态算静态重力矩, 屏蔽速度/加速度动态项。 */
         joint_velocity_rad_s[i]      = 0.0f;
         joint_acceleration_rad_s2[i] = 0.0f;
-#else
-        joint_velocity_rad_s[i]      = robot_arm_joint_buf[i].current_velocity;
-        joint_acceleration_rad_s2[i] = robot_arm_joint_buf[i].current_acceleration;
+#elif (ROBOT_ARM_FF_MODE == 1)
+        /* 参考驱动的完整逆动力学: q̇_d/q̈_d 由上层给(RobotArm_SetJointReferenceMotion)。
+           没喂过时按 0 处理(退化成只重力), 绝不用测量差分。 */
+        if (robot_arm_ref_motion_valid)
+        {
+            joint_velocity_rad_s[i]      = robot_arm_ref_velocity_rad_s[i];
+            joint_acceleration_rad_s2[i] = robot_arm_ref_acceleration_rad_s2[i];
+        }
+        else
+        {
+            joint_velocity_rad_s[i]      = 0.0f;
+            joint_acceleration_rad_s2[i] = 0.0f;
+        }
 #endif
     }
 
@@ -410,6 +447,70 @@ bool RobotArm_GetJointFeedback(uint8_t joint_index, float *angle_rad, float *vel
  * @return 模块内部只读指针；仅非 NULL 位姿输出请求会覆盖其内容。
  */
 const RobotArmTransform *RobotArm_GetBaseToTool(void) { return &robot_arm_base_to_tool; }
+
+/**
+ * @brief 获取某关节转动惯量。
+ */
+float RobotArm_GetJointInertia(uint8_t joint_index)
+{
+    const RobotArmTransform *Tj;    /* 第 j 个连杆坐标系 ^0T_j */
+    float axis_z[3];                /* 关节轴方向 = ^0T_j 第三列 */
+    float axis_p[3];                /* 轴上的一点 = ^0T_j 第四列 */
+    float inertia = 0.0f;
+
+#if !ROBOT_ARM_ENABLE_BASE_TO_JOINT
+#error "RobotArm_GetJointInertia 要读缓存的 ^0T_i, 必须把 ROBOT_ARM_ENABLE_BASE_TO_JOINT 置 1 (见 heavy_robot_def.h)"
+#endif
+
+    if ((joint_index >= ROBOT_ARM_MOTOR_NUM) || (!robot_arm_kinematics.initialized))
+    {
+        return 0.0f;
+    }
+
+    Tj = &robot_arm_base_to_joint[joint_index];
+    for (uint8_t row = 0U; row < 3U; ++row)
+    {
+        axis_z[row] = Tj->element[row][2];
+        axis_p[row] = Tj->element[row][3];
+    }
+
+    /* 关节 j 的等效惯量 = 下游各连杆对该轴的转动惯量之和:
+         M(j,j) = Σ_{i>=j} [ m_i * d_i^2 + a^T * I_com,i * a ]
+       d_i = 质心到转轴的垂直距离(用 |r|^2 - (r·z)^2 算, 免得叉乘)
+       a   = 转轴表达在该连杆坐标系里 = R_i^T * axis_z                        */
+    for (uint8_t link = joint_index; link < ROBOT_ARM_MOTOR_NUM; ++link)
+    {
+        const RobotArmTransform         *Tl  = &robot_arm_base_to_joint[link];
+        const RobotArmLinkDynamicsParam *dyn = &robot_arm_link_dynamics[link];
+        float r[3];                   /* 质心相对轴上那点 O_j, 基座系 */
+        float a[3];                   /* 转轴表达在该连杆坐标系里 */
+        float along = 0.0f;           /* r 在轴方向上的投影 */
+        float d2;                     /* 质心到轴的垂直距离平方 */
+        float body_inertia = 0.0f;    /* a^T*I*a: 连杆自身绕该轴的转动惯量 */
+
+        for (uint8_t row = 0U; row < 3U; ++row)
+        {
+            r[row] = (Tl->element[row][3] + Tl->element[row][0] * dyn->center_of_mass_m[0]
+                                          + Tl->element[row][1] * dyn->center_of_mass_m[1]
+                                          + Tl->element[row][2] * dyn->center_of_mass_m[2]) - axis_p[row];
+            along += r[row] * axis_z[row];
+            a[row]  = Tl->element[0][row] * axis_z[0] + Tl->element[1][row] * axis_z[1]
+                    + Tl->element[2][row] * axis_z[2];
+        }
+        d2 = r[0] * r[0] + r[1] * r[1] + r[2] * r[2] - along * along;
+
+        for (uint8_t row = 0U; row < 3U; ++row) 
+        {
+            body_inertia += a[row] * (dyn->inertia_com_kg_m2[row][0] * a[0]
+                                    + dyn->inertia_com_kg_m2[row][1] * a[1]
+                                    + dyn->inertia_com_kg_m2[row][2] * a[2]);
+        }
+
+        inertia += dyn->mass_kg * d2 + body_inertia;
+    }
+
+    return inertia;
+}
 
 /**
  * @brief 获取最近一次成功计算的基座到指定关节坐标系变换。
