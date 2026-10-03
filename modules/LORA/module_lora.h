@@ -29,5 +29,5 @@ int Lora_Register(const char *name, void *value, Lora_Data_Type type);
 
 void Module_Lora_Init(void);
 int  Lora_Start(void);
-
+uint8_t Module_Lora_get_offline_status(void);
 #endif /* _MODULE_LORA_H_ */

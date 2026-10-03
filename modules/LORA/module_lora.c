@@ -35,6 +35,8 @@ static uint32_t                   lora_last_tx_ms;
 static TX_THREAD                  lora_thread;
 APPS_STACK_SECTION static uint8_t lora_stack[LORA_TASK_STACK_SIZE];
 BUFFER_SECTION static uint8_t     lora_rxbuf[LORA_RX_BUF_SIZE];
+/* DMA 发送源必须落在 DMA 可访问内存: 线程栈在 F4 是 CCMRAM、在 H7 是 DTCM, 都不能被 DMA 读, 拿栈上数组发 DMA 会导致发送失败。*/
+BUFFER_SECTION static uint8_t     lora_txbuf[2u + 1u + 1u + LORA_MAX_PAYLOAD + 1u];
 
 static void lora_task_entry(ULONG arg);
 
@@ -124,8 +126,8 @@ static bool lora_wait_idle(uint32_t timeout_ms)
 
 static bool lora_send_frame(void)
 {
-    uint8_t frame[2 + 1 + 1 + LORA_MAX_PAYLOAD + 1];
-    uint8_t payload[LORA_MAX_PAYLOAD];
+    uint8_t *frame = lora_txbuf; /* DMA 发送源必须在 DMA 可访问内存, 不能用栈上数组 */
+    uint8_t  payload[LORA_MAX_PAYLOAD];
     uint8_t length = lora_serialize(payload);
     uint8_t crc    = 0;
     frame[0]       = LORA_FRAME_HDR0;
@@ -194,8 +196,32 @@ static bool lora_feed_byte(uint8_t byte)
 
 void Module_Lora_Init(void)
 {
+    /* 模块层重新初始化，ioc文件仅做通用配置，不改动*/
+    //初始化使用的引脚，如果占用别的硬件，注意使用的时候别冲突
+    GPIO_InitTypeDef LORA_GPIO ={
+        .Mode =  GPIO_MODE_OUTPUT_PP,
+        .Pull =  GPIO_PULLDOWN,
+        .Speed=  GPIO_SPEED_FREQ_HIGH,
+        .Pin  =  LORA_M0_GPIO_PIN
+    };
+    HAL_GPIO_Init(LORA_M0_GPIO_PORT,&LORA_GPIO);
+
+    LORA_GPIO.Pin = LORA_M1_GPIO_PIN;
+    HAL_GPIO_Init(LORA_M1_GPIO_PORT,&LORA_GPIO);
+
+#if defined(LORA_AUX_GPIO_PORT) && defined(LORA_AUX_GPIO_PIN)
+    if(LORA_AUX_ENABLE)
+    {
+        LORA_GPIO.Mode = GPIO_MODE_INPUT;
+        LORA_GPIO.Pull = GPIO_NOPULL;
+        LORA_GPIO.Pin = LORA_AUX_GPIO_PIN;
+        HAL_GPIO_Init(LORA_AUX_GPIO_PORT,&LORA_GPIO);        
+    }
+#endif
+
     HAL_GPIO_WritePin(LORA_M0_GPIO_PORT, LORA_M0_GPIO_PIN, GPIO_PIN_RESET);
     HAL_GPIO_WritePin(LORA_M1_GPIO_PORT, LORA_M1_GPIO_PIN, GPIO_PIN_RESET);
+    //初始化使用的串口
     LORA_UART.Init.BaudRate = 115200;
     if (HAL_UART_Init(&LORA_UART) != HAL_OK) return;
 
@@ -212,7 +238,7 @@ void Module_Lora_Init(void)
 
     Offline_Init_config_t offline = {
         .name       = "lora",
-        .beep_times = 5,
+        .beep_times = 0,
         .enable     = LORA_OFFLINE_ENABLE,
         .timeout_ms = 100,
     };
@@ -264,6 +290,8 @@ static void lora_process(void)
     (void)now;
 #endif
 }
+
+uint8_t Module_Lora_get_offline_status(void) { return Module_Offline_get_device_status(lora_offline); }
 
 static void lora_task_entry(ULONG arg)
 {
