@@ -9,6 +9,9 @@
 #if (ROBOTIC_ARM_CTRL_MODE == ROBOTIC_ARM_CTRL_MODE_REMOTE_MAP)
 #include "module_remote.h"
 #endif
+#if (ROBOTIC_ARM_CTRL_MODE == ROBOTIC_ARM_CTRL_MODE_COMM_MAP)
+#include "module_lora.h"
+#endif
 #define LOG_TAG "app_arm"
 #define LOG_LVL LOG_LVL_INFO
 #include "ulog_def.h"
@@ -19,7 +22,7 @@ static const char *const robotic_arm_ctrl_mode_name[] = {"gravity_comp", "remote
 Motor_Base *robot_arm_motors[ROBOT_ARM_MOTOR_NUM];
 /* 关节安全限制 */
 static const RoboticArmJointSafetyLimit robotic_arm_joint_limit[ROBOT_ARM_MOTOR_NUM] = {
-    {-2*PI, 2*PI, 1.44f, 37.0f}, {-1.9f, 1.8f, 0.98f, 35.0f}, {-3.2f, 3.0f, 0.98f, 35.0f}, {-2*PI, 2*PI, 10.0f, 12.0f},
+    {-2*PI, 2*PI, 1.44f, 37.0f}, {-1.9f, 1.8f, 1.5f, 35.0f}, {-3.2f, 3.0f, 1.5f, 35.0f}, {-2*PI, 2*PI, 10.0f, 12.0f},
     {-2.1f, 2.7f, 3.6f, 30.0f}, {-2*PI, 2*PI, 10.0f, 3.0f}, {-2.0f, 2.0f, 10.0f, 12.0f},
 };
 #if (ROBOTIC_ARM_CTRL_MODE == ROBOTIC_ARM_CTRL_MODE_GRAVITY_COMP)
@@ -77,6 +80,9 @@ static RobotArmComController arm_com;
 #if (ROBOTIC_ARM_CTRL_MODE == ROBOTIC_ARM_CTRL_MODE_REMOTE_MAP)
 /* 遥控器实例 */
 static Remote_Data_t *remote_data;
+#elif (ROBOTIC_ARM_CTRL_MODE == ROBOTIC_ARM_CTRL_MODE_COMM_MAP)
+/* LORA 期望值 */
+static float lora_arm_ref[ROBOT_ARM_MOTOR_NUM+1]; //第八个是夹爪电机速度
 #endif
 #endif
 /* 机械臂初始化 */
@@ -280,6 +286,56 @@ bool arm_init(void)
 
     LOG_I("robot arm init ok, ctrl mode=%d (%s)", ROBOTIC_ARM_CTRL_MODE,
           robotic_arm_ctrl_mode_name[ROBOTIC_ARM_CTRL_MODE]);
+
+#if (ROBOTIC_ARM_CTRL_MODE == ROBOTIC_ARM_CTRL_MODE_COMM_MAP)
+    if (Lora_Register("J1", &lora_arm_ref[0], LORA_TYPE_FLOAT) < 0) 
+    {
+        LOG_E("robot arm LORA communication init failed");
+        return false;
+    }
+    if (Lora_Register("J2", &lora_arm_ref[1], LORA_TYPE_FLOAT) < 0) 
+    {
+        LOG_E("robot arm LORA communication init failed");
+        return false;
+    }
+    if (Lora_Register("J3", &lora_arm_ref[2], LORA_TYPE_FLOAT) < 0) 
+    {
+        LOG_E("robot arm LORA communication init failed");
+        return false;
+    }
+    if (Lora_Register("J4", &lora_arm_ref[3], LORA_TYPE_FLOAT) < 0) 
+    {
+        LOG_E("robot arm LORA communication init failed");
+        return false;
+    }
+    if (Lora_Register("J5", &lora_arm_ref[4], LORA_TYPE_FLOAT) < 0) 
+    {
+        LOG_E("robot arm LORA communication init failed");
+        return false;
+    }
+    if (Lora_Register("J6", &lora_arm_ref[5], LORA_TYPE_FLOAT) < 0) 
+    {
+        LOG_E("robot arm LORA communication init failed");
+        return false;
+    }
+    if (Lora_Register("J7", &lora_arm_ref[6], LORA_TYPE_FLOAT) < 0) 
+    {
+        LOG_E("robot arm LORA communication init failed");
+        return false;
+    }
+    if (Lora_Register("tool", &lora_arm_ref[7], LORA_TYPE_FLOAT) < 0) 
+    {
+        LOG_E("robot arm LORA communication init failed");
+        return false;
+    }
+    if(Lora_Start()<0)
+    {
+        LOG_E("robot arm LORA communication start failed");
+        return false;
+    }
+    LOG_I("robot arm LORA communication init ok");
+
+#endif
     return true;
 }
 
@@ -658,6 +714,9 @@ static void RoboticArm_LockAtCurrentPosition(void)
         #if (ROBOTIC_ARM_CTRL_MODE == ROBOTIC_ARM_CTRL_MODE_REMOTE_MAP ||ROBOTIC_ARM_CTRL_MODE == ROBOTIC_ARM_CTRL_MODE_COMM_MAP)
         arm_com.arm_ref[i]    = angle_rad;
         #endif
+        #if (ROBOTIC_ARM_CTRL_MODE == ROBOTIC_ARM_CTRL_MODE_COMM_MAP)
+        lora_arm_ref[i] = angle_rad;
+        #endif
         #if ROBOTIC_ARM_CTRL_MODE==ROBOTIC_ARM_CTRL_MODE_IDENTIFY
         controller->error_last = 0.0f;
         #endif       
@@ -850,8 +909,8 @@ void remote_ctrl_arm(void)
                     }
                     break;
                 case LOW_FOUR:
-                    arm_com.arm_ref[0]+=0.0000009*ly_channel;//推满约每秒1度
-                    arm_com.arm_ref[1]-=0.0000022*lx_channel;//推满约每秒5度
+                    arm_com.arm_ref[0]+=0.0000009*ly_channel;//推满约20.2°/s
+                    arm_com.arm_ref[1]-=0.0000022*lx_channel;//推满约49.3°/s
                     arm_com.arm_ref[2]-=0.0000022*rx_channel;
                     arm_com.arm_ref[3]+=0.0000022*ry_channel;
                     break;
@@ -870,3 +929,67 @@ void remote_ctrl_arm(void)
 }
 #endif
 
+#if (ROBOTIC_ARM_CTRL_MODE == ROBOTIC_ARM_CTRL_MODE_COMM_MAP)
+/* 通信（LORA）映射 */
+void com_lora_ctrl_arm(void)
+{
+    static uint8_t unsafe_flag = 0;
+    static uint8_t comback_time = 0;
+
+    if(Module_Lora_get_offline_status() == STATE_OFFLINE)
+    {
+        safe_sta = UNSAFE_STOP;
+        RoboticArm_StopAllMotors();
+        unsafe_flag = 1;
+        comback_time = 0;
+    }
+    else
+    {
+        if(unsafe_flag)
+        {
+            if(comback_time < 100)
+                comback_time++;
+            if(comback_time >= 100)
+            {
+                safe_sta=SAFE_INIT;
+                unsafe_flag = 0;
+            }
+        }
+        if(safe_sta == SAFE_RUN)
+        {
+            //如果相差较多，按照固定步长进行逼近，避免出现大幅度跳变
+            //j1按照0.0007的步长进行逼近即约20°/s
+            if(lora_arm_ref[0]-arm_com.arm_ref[0] > 0.001f)
+            {
+                arm_com.arm_ref[0] += 0.0007f;
+            }
+            else if(lora_arm_ref[0]-arm_com.arm_ref[0] < -0.001f)
+            {
+                arm_com.arm_ref[0] -= 0.0007f;
+            }
+            else
+            {
+                arm_com.arm_ref[0] = lora_arm_ref[0];
+            }
+            //j2-j7按照0.0017的步长进行逼近即约50°/s
+            for(uint8_t i = 1; i < ROBOT_ARM_MOTOR_NUM; ++i)
+            {
+                if(lora_arm_ref[i]-arm_com.arm_ref[i] > 0.002f)
+                {
+                    arm_com.arm_ref[i] += 0.0017f;
+                }
+                else if(lora_arm_ref[i]-arm_com.arm_ref[i] < -0.002f)
+                {
+                    arm_com.arm_ref[i] -= 0.0017f;
+                }
+                else
+                {
+                    arm_com.arm_ref[i] = lora_arm_ref[i];
+                }
+            }
+            arm_com.arm_ref[7] = lora_arm_ref[7];           
+            RoboticArm_SetExpect(arm_com.arm_ref);
+        }
+    }
+}
+#endif

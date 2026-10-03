@@ -6,11 +6,11 @@
 /* 机械臂 */
 /*  机械臂控制模式 */
 #define ROBOTIC_ARM_CTRL_MODE_GRAVITY_COMP 0 /* 纯重力补偿 */
-#define ROBOTIC_ARM_CTRL_MODE_REMOTE_MAP   1 /* 遥控器映射 */
-#define ROBOTIC_ARM_CTRL_MODE_COMM_MAP     2 /* 通信映射 */
+#define ROBOTIC_ARM_CTRL_MODE_REMOTE_MAP   1 /* 遥控器映射(记得开离线检测) */
+#define ROBOTIC_ARM_CTRL_MODE_COMM_MAP     2 /* 通信映射(记得开离线检测) */
 #define ROBOTIC_ARM_CTRL_MODE_IDENTIFY     3 /* 参数辨识 */
 //模式选择
-#define ROBOTIC_ARM_CTRL_MODE ROBOTIC_ARM_CTRL_MODE_REMOTE_MAP
+#define ROBOTIC_ARM_CTRL_MODE ROBOTIC_ARM_CTRL_MODE_COMM_MAP
 /* 纯重力类模式: 模型侧屏蔽速度/加速度动态项, 只算静态重力前馈。*/
 #define ROBOTIC_ARM_MODE_IS_GRAVITY_ONLY                                                      \
     ((ROBOTIC_ARM_CTRL_MODE == ROBOTIC_ARM_CTRL_MODE_GRAVITY_COMP) ||                         \

@@ -20,6 +20,8 @@ static void robot_control_task(ULONG thread_input)
     {
         #if (ROBOTIC_ARM_CTRL_MODE == ROBOTIC_ARM_CTRL_MODE_REMOTE_MAP)
         remote_ctrl_arm();
+        #elif (ROBOTIC_ARM_CTRL_MODE == ROBOTIC_ARM_CTRL_MODE_COMM_MAP)
+        com_lora_ctrl_arm();
         #endif
         arm_func();
         /* 力矩已更新, 立刻触发下发 */

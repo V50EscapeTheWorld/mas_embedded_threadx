@@ -13,7 +13,7 @@
 #if (ROBOTIC_ARM_CTRL_MODE == ROBOTIC_ARM_CTRL_MODE_REMOTE_MAP)
 #define GRIPPER_MOTOR_SPEEDE_MAP 5.0/783 //规定夹爪电机最大转速为5rad/s 
 #endif
-/* 状态结构体 */
+/* 状态枚举 */
 typedef enum{
     SAFE_INIT,     //首次安全
     SAFE_RUN,      //安全运行
@@ -22,7 +22,7 @@ typedef enum{
 }Safity_sta;
 
 #if (ROBOTIC_ARM_CTRL_MODE == ROBOTIC_ARM_CTRL_MODE_REMOTE_MAP)
-/* 状态结构体 */
+/* 状态枚举 */
 typedef enum{
     ARM_KEEP,  //保持姿态
     LOW_FOUR,  //下四轴
@@ -64,6 +64,7 @@ bool RoboticArm_SetExternalWrench(const RobotArmWrench *wrench);
 void RoboticArm_SetExpect(float expect[ROBOT_ARM_MOTOR_NUM]);
 void RoboticArm_SetBaseMotion(RobotArmLinkMotion *base_motion);
 void remote_ctrl_arm(void);
+void com_lora_ctrl_arm(void);
 const RoboticArmJointSafetyLimit *RoboticArm_GetJointLimit(uint8_t index);
 
 #endif // _ARM_FUNC_H_
